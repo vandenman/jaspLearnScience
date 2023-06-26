@@ -95,7 +95,7 @@ galileoFillModelTable <- function(jaspResults, dataset, options, modelObject) {
 
   jaspResults[["modelTable"]]$setData(data.frame(
     model = modelNames,
-    BF    = BF
+    BF    = BFs
   ))
 
 }

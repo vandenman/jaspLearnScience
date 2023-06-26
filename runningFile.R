@@ -56,6 +56,10 @@ basFit <- BAS::bas.lm(
   modelprior = BAS::uniform()
 )
 
+
+basFit$postprobs
+
+
 summary(basFit)
 
 BAS:::predict.bas()

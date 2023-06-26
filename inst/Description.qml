@@ -3,8 +3,8 @@ import JASP.Module	1.0
 
 Description
 {
-	name		: "jaspjaspLearnScience"
-	title		: qsTr("Jasp Learn Science")
+	name		: "jaspLearnScience"
+	title		: qsTr("Learn Science")
 	description	: qsTr("This module offers analyses.")
 	version		: "0.1"
 	author		: "JASP Team"
