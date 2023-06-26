@@ -1,4 +1,4 @@
-Package: jaspModule
+Package: jaspLearnScience
 Type: Package
 Title: A module for JASP
 Version: 0.1.0
@@ -10,6 +10,7 @@ Description: This module offers analyses.
 License: GPL (>= 2)
 Encoding: UTF-8
 Imports:
+  BAS,
   jaspBase,
   jaspGraphs
 Suggests:
@@ -17,3 +18,5 @@ Suggests:
 Remotes:
   jasp-stats/jaspBase,
   jasp-stats/jaspGraphs
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.3
