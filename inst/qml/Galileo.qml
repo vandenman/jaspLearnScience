@@ -23,11 +23,11 @@ import JASP.Controls
 Form
 {
 
-//	Formula
-//	{
-//		lhs: "dependent"
-//		rhs: [{ name: "modelTerms", extraOptions: "isNuisance" }]
-//	}
+	//	Formula
+	//	{
+	//		lhs: "dependent"
+	//		rhs: [{ name: "modelTerms", extraOptions: "isNuisance" }]
+	//	}
 
 	VariablesForm
 	{
@@ -38,15 +38,67 @@ Form
 
 	BayesFactorType {}
 
+	RadioButtonGroup
+	{
+		name: "bayesFactorReferenceModel"
+		title: qsTr("Reference Model")
+		RadioButton { value: "bestModel";		label: qsTr("Compare to best model"); checked: true	}
+//		RadioButton { value: "nullModel";		label: qsTr("Compare to null model")				}
+		RadioButton
+		{
+			value: "specificModel"
+			label: qsTr("Compare to specific model")
+			childrenOnSameRow: true
+
+			DropDown
+			{
+				name: "specificReferenceModel"
+				indexDefaultValue: 3
+				values: [
+					{ label: qsTr("constant"),				value: 0	},
+					{ label: qsTr("linear"),				value: 1	},
+					{ label: qsTr("quadratic"),				value: 2	},
+					{ label: qsTr("cubic"),					value: 3	},
+					{ label: qsTr("quartic"),				value: 4	},
+					{ label: qsTr("quintic"),				value: 5	},
+					{ label: qsTr("sextic"),				value: 6	},
+					{ label: qsTr("septic"),				value: 7	},
+					{ label: qsTr("octic"),					value: 8	},
+					{ label: qsTr("nonic"),					value: 9	},
+					{ label: qsTr("decic"),					value: 10	}
+				].slice(0, maxDegree ? maxDegree.value + 1 : 4)
+				id: summaryType
+			}
+		}
+	}
+	// should be superseded by Model section
+	IntegerField { name: "maxDegree"; min: 1; max: 10; defaultValue: 3; label: qsTr("Maximum degree"); id: maxDegree }
 
 	Group
 	{
 		title: qsTr("Plots")
-
+		DropDown
+		{
+			name: "colorPalette"
+			label: qsTr("Color palette")
+			indexDefaultValue: 0
+			values:
+			[
+				{ label: qsTr("Colorblind"),		value: "colorblind"		},
+				{ label: qsTr("Colorblind Alt."),	value: "colorblind3"	},
+				{ label: qsTr("Viridis"),			value: "viridis"		},
+				{ label: qsTr("ggplot2"),			value: "ggplot2"		},
+				{ label: qsTr("Gray"),				value: "gray"			}
+			]
+		}
+		CheckBox
+		{
+			title: qsTr("Plot data and model predictions");
+			name: "dataAndModelPredictionsPlot"
+			checked: true
+		}
 	}
 
-	// should be superseded by Model section
-	IntegerField { name: "maxDegree"; min: 1; max: 10; defaultValue: 3; label: qsTr("Maximum degree") }
 
 	Section
 	{

@@ -27,8 +27,7 @@ Galileo <- function(jaspResults, dataset, options) {
 
   modelObject <- galileoModelTable(jaspResults, dataset, options)
 
-  # galileoPlotDataAndModelPredictions(jaspResults, dataset, options, modelObject)
-
+  galileoDataAndModelPredictionsPlot(jaspResults, dataset, options, modelObject)
 
 }
 
@@ -56,13 +55,18 @@ galileoModelTable <- function(jaspResults, dataset, options) {
   return(modelObject)
 }
 
-
 galileoInitializeModelTable <- function(jaspResults, options) {
 
   # TODO: dependencies!
   modelTable <- createJaspTable(title = gettext("Models"))
-  modelTable$addColumnInfo(name = "model", title = gettext("Model"),        type = "string")
-  modelTable$addColumnInfo(name = "BF",    title = gettext("Bayes factor"), type = "number")
+  modelTable$dependOn(options = c("dependent", "covariate", "bayesFactorType", "bayesFactorReferenceModel", "specificReferenceModel"))
+
+  bfTitle <- galileoGetBfTitle(options[["bayesFactorType"]], options[["bayesFactorReferenceModel"]], options[["specificReferenceModel"]])
+
+  modelTable$addColumnInfo(name = "model",              title = gettext("Model"), type = "string")
+  modelTable$addColumnInfo(name = "priorModelProb",     title = "P(M)",           type = "number")
+  modelTable$addColumnInfo(name = "posteriorModelProb", title = "P(M|data)",      type = "number")
+  modelTable$addColumnInfo(name = "bayesFactor",        title = bfTitle,          type = "number")
 
   jaspResults[["modelTable"]] <- modelTable
 
@@ -74,29 +78,35 @@ galileoFillModelTable <- function(jaspResults, dataset, options, modelObject) {
 
   basObject <- modelObject$basObject
 
-  modelNames <- degreeToName(seq_len(maxDegree + 1))
-  modelWhich <- vapply(0:maxDegree, function(i) {
-    for (j in seq_along(basObject$which)) {
-      if (identical(basObject$which[[j]], 0:i))
-        return(j)
-    }
-  }, FUN.VALUE = integer(1L))
+  modelWhich <- extractModelIndices(basObject, maxDegree)
 
   postprobs  <- basObject$postprobs[modelWhich]
   priorprobs <- basObject$priorprobs[modelWhich]
 
+  # renormalize since we excluded some models
   postprobs  <- postprobs  / sum(postprobs)
   priorprobs <- priorprobs / sum(priorprobs)
 
-  bestModelIdx <- which.max(postprobs)
-  BFs          <- (postprobs / postprobs[bestModelIdx]) / (priorprobs / priorprobs[bestModelIdx])
+  referenceModelIndex <- if (options[["bayesFactorReferenceModel"]] == "bestModel") {
+    which.max(postprobs) # only valid because we assume the modelprior is uniform
+  } else {
+    min(length(postprobs), as.integer(options[["specificReferenceModel"]]) + 1L)
+  }
 
-  BFs <- jaspBase::.recodeBFtype(BFs, newBFtype = options[["bayesFactorType"]], oldBFtype = "BF10")
+  BF10s <- (postprobs / postprobs[referenceModelIndex]) / (priorprobs / priorprobs[referenceModelIndex])
 
-  jaspResults[["modelTable"]]$setData(data.frame(
-    model = modelNames,
-    BF    = BFs
-  ))
+  BFs <- jaspBase::.recodeBFtype(BF10s, newBFtype = options[["bayesFactorType"]], oldBFtype = "BF10")
+
+  modelNames <- degreeToName(seq_len(maxDegree + 1))
+
+  tableData <- data.frame(
+    model              = modelNames,
+    priorModelProb     = priorprobs,
+    posteriorModelProb = postprobs,
+    bayesFactor        = BFs
+  )
+
+  jaspResults[["modelTable"]]$setData(tableData)
 
 }
 
@@ -121,6 +131,90 @@ galileoFitModels <- function(jaspResults, dataset, options) {
   ))
 }
 
+galileoDataAndModelPredictionsPlot <- function(jaspResults, dataset, options, modelObject) {
+
+  if (!options[["dataAndModelPredictionsPlot"]])
+    return()
+
+  jaspResults[["dataAndModelPredictionsPlot"]] %setOrRetrieve% (
+    galileoFillDataAndModelPredictionsPlot(
+      dataset           = dataset,
+      dependent         = options[["dependent"]],
+      covariate         = options[["covariate"]],
+      coefficientsList  = galileoExtractCoefficientsList(modelObject, options[["maxDegree"]]),
+      colorPalette      = options[["colorPalette"]]
+    ) |>
+      createJaspPlot(
+        title        = gettext("Scatter Plot with Model predictions"),
+        dependencies = c("dependent", "covariate", "dataAndModelPredictionsPlot", "colorPalette"),
+        width  = 480,
+        height = 360
+      )
+  )
+}
+
+galileoExtractCoefficientsList <- function(modelObject, maxDegree) {
+
+  basObject <- modelObject[["basObject"]]
+  modelWhich <- extractModelIndices(basObject, maxDegree)
+
+  return(basObject[["mle"]][modelWhich])
+
+}
+
+galileoFillDataAndModelPredictionsPlot <- function(dataset, dependent, covariate, coefficientsList, colorPalette) {
+
+  if (length(coefficientsList) == 0L)
+    return(NULL)
+
+  xBreaks <- pretty(dataset[[covariate]])
+  xLimits <- range(xBreaks)
+  xValues <- seq(xLimits[1L], xLimits[2L], length.out = 2048L)
+
+  yValues <- do.call(cbind, lapply(coefficientsList, evaluate_polynomial, x = xValues))
+
+  df <- data.frame(
+    x     = rep(xValues, maxOrder),
+    y     = c(yValues),
+    order = rep(factor(seq_len(maxOrder)), each = length(xValues))
+  )
+
+  # ggplot2, sigh...
+  dependentSym <- rlang::sym(dependent)
+  covariateSym <- rlang::sym(covariate)
+  pointMapping <- ggplot2::aes(x = !!covariateSym, y = !!dependentSym)
+
+  plot <- ggplot2::ggplot() +
+    ggplot2::geom_line(data = df, mapping = ggplot2::aes(x = x, y = y, group = order, color = order), inherit.aes = FALSE) +
+    jaspGraphs::geom_point(data = dataset, mapping = pointMapping) +
+    jaspGraphs::scale_JASPcolor_discrete(palette = colorPalette) +
+    jaspGraphs::geom_rangeframe() +
+    jaspGraphs::themeJaspRaw(legend.position = "right")
+
+  return(plot)
+
+}
+
+# helpers ----
+evaluate_polynomial <- function(x, coefs) {
+
+  sum <- numeric(length(x))
+  for(i in 0:(length(coefs) - 1))
+    sum <- sum + coefs[i+1]*x^i
+
+  sum
+}
+
+extractModelIndices <- function(basObject, maxDegree) {
+  indices <- vapply(0:maxDegree, function(i) {
+    for (j in seq_along(basObject[["which"]])) {
+      if (identical(basObject[["which"]][[j]], 0:i))
+        return(j)
+    }
+  }, FUN.VALUE = integer(1L))
+  indices[order(lengths(basObject[["which"]][indices]))]
+}
+
 degreeToName <- function(index) {
 
   # index with degree + 1
@@ -141,5 +235,35 @@ degreeToName <- function(index) {
   if (missing(index))
     return(values)
 
+  if (is.character(index))
+    index <- as.integer(index)
+
   return(values[index])
+}
+
+galileoGetBfTitle <- function(bayesFactorType, referenceModel, specificReferenceModel) {
+  if (referenceModel == "bestModel") {
+    bfTitle <- switch(
+      bayesFactorType,
+      "BF10"      = gettext("BF<sub>1b</sub>"),
+      "BF01"      = gettext("BF<sub>b1</sub>"),
+      "Log(BF10)" = gettext("Log(BF<sub>1b</sub>)")
+    )
+  } else if (referenceModel == "bestModel") {
+    bfTitle <- switch(
+      bayesFactorType,
+      "BF10"      = gettext("BF<sub>10</sub>"),
+      "BF01"      = gettext("BF<sub>01</sub>"),
+      "Log(BF10)" = gettext("Log(BF<sub>10</sub>)")
+    )
+  } else {
+    name <- degreeToName(as.integer(specificReferenceModel) + 1L)
+    bfTitle <- switch(
+      bayesFactorType,
+      "BF10"      = gettextf("BF<sub>1, %s</sub>",      name),
+      "BF01"      = gettextf("BF<sub>%s, 1</sub>",      name),
+      "Log(BF10)" = gettextf("Log(BF<sub>1, %s</sub>)", name)
+    )
+  }
+  return(bfTitle)
 }

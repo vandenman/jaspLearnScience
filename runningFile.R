@@ -16,13 +16,13 @@ polynomial = function(x,coefs) {
   sum
 }
 
-maxOrder <- 4L
+maxDegree <- 4L
 
-resLm <- vector("list", maxOrder)
-resLm[[1]] <- lm(h.d ~ init.h, data = galileo)
-for (i in 2:maxOrder) {
-  fNew <- as.formula(sprintf(". ~ . + I(init.h^%d)", i))
-  resLm[[i]] <- update(resLm[[i - 1]], fNew, data=galileo)
+resLm <- vector("list", maxDegree + 1)
+resLm[[1]] <- lm(h.d ~ 1, data = galileo)
+for (i in 1:maxDegree) {
+  fNew <- as.formula(sprintf("h.d ~ poly(init.h, %d, raw = TRUE)", i))
+  resLm[[i + 1]] <- lm(fNew, data = galileo)
 }
 
 
@@ -33,9 +33,9 @@ xValues <- seq(xLimits[1L], xLimits[2L], length.out = 2^10)
 yValues <- do.call(cbind, lapply(resLm, polynomial, x = xValues))
 
 df <- data.frame(
-    x = rep(xValues, maxOrder),
+    x = rep(xValues, maxDegree),
     y = c(yValues),
-    order = rep(factor(seq_len(maxOrder)), each = length(xValues))
+    order = rep(factor(seq_len(maxDegree)), each = length(xValues))
 )
 
 ggplot2::ggplot() +
@@ -45,17 +45,34 @@ ggplot2::ggplot() +
   jaspGraphs::themeJaspRaw(legend.position = "right")
 
 
+fullModel <- h.d ~ poly(init.h, maxDegree, raw = TRUE)
 
-
-fullModel <- h.d ~ poly(init.h, 4)
-
-basFit <- BAS::bas.lm(
+basObject <- BAS::bas.lm(
   formula    = fullModel,
   data       = galileo,
   prior      = "JZS",
   modelprior = BAS::uniform()
 )
+basObject$X[, -1] == resLm[[5]]$model[, -1]
 
+idx <- extractModelIndices(basObject, maxDegree)
+basObject$which[idx]
+basObject$mle[idx]
+lapply(resLm, \(x) unname(coef(x)))
+
+coefMat <- matrix(0, length(idx), maxDegree + 1L)
+for (i in seq_along(idx)) {
+  coefs <- basObject$mle[[idx[i]]]
+  coefMat[i, seq_along(coefs)] <- coefs
+}
+
+
+basObject$X %*% coefMat
+
+fitted(basObject)
+
+BAS:::fitted.bas
+BAS:::predict.bas
 
 basFit$postprobs
 
