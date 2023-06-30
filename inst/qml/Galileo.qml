@@ -66,7 +66,7 @@ Form
 					{ label: qsTr("octic"),					value: 8	},
 					{ label: qsTr("nonic"),					value: 9	},
 					{ label: qsTr("decic"),					value: 10	}
-				].slice(0, maxDegree ? maxDegree.value + 1 : 4)
+				].slice(0, maxDegree ? parseInt(maxDegree.value) + 1 : 4)
 				id: summaryType
 			}
 		}
@@ -93,7 +93,7 @@ Form
 		}
 		CheckBox
 		{
-			title: qsTr("Plot data and model predictions");
+			label: qsTr("Plot data and model predictions");
 			name: "dataAndModelPredictionsPlot"
 			checked: true
 		}

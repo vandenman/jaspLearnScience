@@ -46,7 +46,7 @@ galileoModelTable <- function(jaspResults, dataset, options) {
 
   modelObject <- jaspResults[["modelObject"]] %setOrRetrieve% (
     galileoFitModels(jaspResults, dataset, options) |>
-      createJaspState(dependencies = jaspDeps(c("dependent", "covariate")))
+      createJaspState(dependencies = jaspDeps(c("dependent", "covariate", "maxDegree")))
   )
 
   if (recomputeTable)
@@ -59,7 +59,7 @@ galileoInitializeModelTable <- function(jaspResults, options) {
 
   # TODO: dependencies!
   modelTable <- createJaspTable(title = gettext("Models"))
-  modelTable$dependOn(options = c("dependent", "covariate", "bayesFactorType", "bayesFactorReferenceModel", "specificReferenceModel"))
+  modelTable$dependOn(options = c("dependent", "covariate", "maxDegree", "bayesFactorType", "bayesFactorReferenceModel", "specificReferenceModel"))
 
   bfTitle <- galileoGetBfTitle(options[["bayesFactorType"]], options[["bayesFactorReferenceModel"]], options[["specificReferenceModel"]])
 
@@ -76,12 +76,12 @@ galileoFillModelTable <- function(jaspResults, dataset, options, modelObject) {
 
   maxDegree <- options[["maxDegree"]]
 
-  basObject <- modelObject$basObject
+  basObject <- modelObject[["basObject"]]
 
   modelWhich <- extractModelIndices(basObject, maxDegree)
 
-  postprobs  <- basObject$postprobs[modelWhich]
-  priorprobs <- basObject$priorprobs[modelWhich]
+  postprobs  <- basObject[["postprobs"]][modelWhich]
+  priorprobs <- basObject[["priorprobs"]][modelWhich]
 
   # renormalize since we excluded some models
   postprobs  <- postprobs  / sum(postprobs)
@@ -93,7 +93,8 @@ galileoFillModelTable <- function(jaspResults, dataset, options, modelObject) {
     min(length(postprobs), as.integer(options[["specificReferenceModel"]]) + 1L)
   }
 
-  BF10s <- (postprobs / postprobs[referenceModelIndex]) / (priorprobs / priorprobs[referenceModelIndex])
+  BF10s <- exp(basObject[["logmarg"]] - basObject[["logmarg"]][referenceModelIndex])
+  # BF10s <- (postprobs / postprobs[referenceModelIndex]) / (priorprobs / priorprobs[referenceModelIndex])
 
   BFs <- jaspBase::.recodeBFtype(BF10s, newBFtype = options[["bayesFactorType"]], oldBFtype = "BF10")
 
@@ -113,8 +114,9 @@ galileoFillModelTable <- function(jaspResults, dataset, options, modelObject) {
 galileoFitModels <- function(jaspResults, dataset, options) {
 
   # TODO: figure out all common models and set inclusion probabilities to one
+  maxDegree <- options[["maxDegree"]]
   fullModelFormula <- as.formula(sprintf("%s ~ poly(%s, %d)",
-                                         options[["dependent"]], options[["covariate"]], options[["maxDegree"]]))
+                                         options[["dependent"]], options[["covariate"]], maxDegree))
 
   basObject <- BAS::bas.lm(
     formula    = fullModelFormula,
@@ -124,10 +126,45 @@ galileoFitModels <- function(jaspResults, dataset, options) {
     modelprior = BAS::uniform()
   )
 
-  # TODO: probable we want do renormalize here, no?
+  # renormalize the basObject
+  # 1. drop all information from irrelevant models
+  # 2. renormalize prior and posterior probabilities
+  # 3. recompute inclusion probabilities
+  # 4. compute inclusion Bayes Factors (currently unused)
+
+  # dput(names(which(lengths(basObject) == 8)))
+  namesToSubset <- c("which", "logmarg", "postprobs", "priorprobs", "sampleprobs",
+                     "mse", "mle", "mle.se", "shrinkage", "size", "R2", "rank", "postprobs.RN",
+                     "df")
+  idx <- extractModelIndices(basObject, maxDegree) # models to keep
+
+  for (nm in namesToSubset)
+    basObject[[nm]] <- basObject[[nm]][idx]
+
+  basObject$postprobs  <- basObject$postprobs  / sum(basObject$postprobs)
+  basObject$priorprobs <- basObject$priorprobs / sum(basObject$priorprobs)
+
+  # these two lines assume that all models with strictly increasing degree and do not work without that assumption
+  posteriorInclProb <- rev(cumsum(rev(basObject$postprobs)))
+  priorInclProb     <- rev(cumsum(rev(basObject$priorprobs)))
+  inclBF            <- (posteriorInclProb / (1 - posteriorInclProb)) / (priorInclProb / (1 - priorInclProb))
+  inclBF[1L]        <- NA_real_ # no evidence
+
+  # we could not create these here and instead in the plot functions, but I'm not 100% sure if it matters
+  xBreaks <- pretty(dataset[[options[["covariate"]]]])
+  xLimits <- range(xBreaks)
+  xValues <- seq(xLimits[1L], xLimits[2L], length.out = 2048L)
+
+  newData           <- data.frame(placeholder = xValues)
+  colnames(newData) <- options[["covariate"]]
+  predictionsObj <- predict(basObject, newdata = newData, estimator = "BMA", top = maxDegree + 1L, se.fit = TRUE)
 
   return(list(
-    basObject = basObject
+    basObject         = basObject,
+    predictionsObj    = predictionsObj,
+    posteriorInclProb = posteriorInclProb,
+    priorInclProb     = priorInclProb,
+    inclBF            = inclBF
   ))
 }
 
@@ -138,15 +175,15 @@ galileoDataAndModelPredictionsPlot <- function(jaspResults, dataset, options, mo
 
   jaspResults[["dataAndModelPredictionsPlot"]] %setOrRetrieve% (
     galileoFillDataAndModelPredictionsPlot(
-      dataset           = dataset,
-      dependent         = options[["dependent"]],
-      covariate         = options[["covariate"]],
-      coefficientsList  = galileoExtractCoefficientsList(modelObject, options[["maxDegree"]]),
-      colorPalette      = options[["colorPalette"]]
+      dataset        = dataset,
+      dependent      = options[["dependent"]],
+      covariate      = options[["covariate"]],
+      predictionsObj = modelObject[["predictionsObj"]],
+      colorPalette   = options[["colorPalette"]]
     ) |>
       createJaspPlot(
         title        = gettext("Scatter Plot with Model predictions"),
-        dependencies = c("dependent", "covariate", "dataAndModelPredictionsPlot", "colorPalette"),
+        dependencies = c("dependent", "covariate", "maxDegree", "dataAndModelPredictionsPlot", "colorPalette"),
         width  = 480,
         height = 360
       )
@@ -162,22 +199,26 @@ galileoExtractCoefficientsList <- function(modelObject, maxDegree) {
 
 }
 
-galileoFillDataAndModelPredictionsPlot <- function(dataset, dependent, covariate, coefficientsList, colorPalette) {
+galileoFillDataAndModelPredictionsPlot <- function(dataset, dependent, covariate, predictionsObj, colorPalette) {
 
-  if (length(coefficientsList) == 0L)
+  if (is.null(predictionsObj))
     return(NULL)
 
   xBreaks <- pretty(dataset[[covariate]])
   xLimits <- range(xBreaks)
   xValues <- seq(xLimits[1L], xLimits[2L], length.out = 2048L)
 
-  yValues <- do.call(cbind, lapply(coefficientsList, evaluate_polynomial, x = xValues))
+  maxDegree <- nrow(predictionsObj[["Ypred"]]) # should be -1, but every use in this function would require doing +1
 
+  degreeNames <- degreeToName(1:maxDegree)
   df <- data.frame(
-    x     = rep(xValues, maxOrder),
-    y     = c(yValues),
-    order = rep(factor(seq_len(maxOrder)), each = length(xValues))
+    x     = rep(xValues, maxDegree),
+    y     = c(t(predictionsObj[["Ypred"]])[, order(predictionsObj[["best"]])]),
+    order = rep(factor(seq_len(maxDegree), labels = degreeNames), each = length(xValues))
   )
+
+  yBreaks <- jaspGraphs::getPrettyAxisBreaks(c(dataset[[dependent]], df$y))
+  yLimits <- range(yBreaks)
 
   # ggplot2, sigh...
   dependentSym <- rlang::sym(dependent)
@@ -188,6 +229,9 @@ galileoFillDataAndModelPredictionsPlot <- function(dataset, dependent, covariate
     ggplot2::geom_line(data = df, mapping = ggplot2::aes(x = x, y = y, group = order, color = order), inherit.aes = FALSE) +
     jaspGraphs::geom_point(data = dataset, mapping = pointMapping) +
     jaspGraphs::scale_JASPcolor_discrete(palette = colorPalette) +
+    ggplot2::scale_x_continuous(name = covariate, breaks = xBreaks, limits = xLimits) +
+    ggplot2::scale_y_continuous(name = dependent, breaks = yBreaks, limits = yLimits) +
+    ggplot2::labs(color = NULL) +
     jaspGraphs::geom_rangeframe() +
     jaspGraphs::themeJaspRaw(legend.position = "right")
 
@@ -247,14 +291,14 @@ galileoGetBfTitle <- function(bayesFactorType, referenceModel, specificReference
       bayesFactorType,
       "BF10"      = gettext("BF<sub>1b</sub>"),
       "BF01"      = gettext("BF<sub>b1</sub>"),
-      "Log(BF10)" = gettext("Log(BF<sub>1b</sub>)")
+      "LogBF10"   = gettext("Log(BF<sub>1b</sub>)")
     )
   } else if (referenceModel == "bestModel") {
     bfTitle <- switch(
       bayesFactorType,
       "BF10"      = gettext("BF<sub>10</sub>"),
       "BF01"      = gettext("BF<sub>01</sub>"),
-      "Log(BF10)" = gettext("Log(BF<sub>10</sub>)")
+      "LogBF10"   = gettext("Log(BF<sub>10</sub>)")
     )
   } else {
     name <- degreeToName(as.integer(specificReferenceModel) + 1L)
@@ -262,7 +306,7 @@ galileoGetBfTitle <- function(bayesFactorType, referenceModel, specificReference
       bayesFactorType,
       "BF10"      = gettextf("BF<sub>1, %s</sub>",      name),
       "BF01"      = gettextf("BF<sub>%s, 1</sub>",      name),
-      "Log(BF10)" = gettextf("Log(BF<sub>1, %s</sub>)", name)
+      "LogBF10"   = gettextf("Log(BF<sub>1, %s</sub>)", name)
     )
   }
   return(bfTitle)

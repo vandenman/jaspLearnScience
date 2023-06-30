@@ -15,5 +15,5 @@ colnames(galileo) <- c("init_h", "h_d")
 options$dependent <- "init_h"
 options$covariate <- "h_d"
 
-debugonce(jaspLearnScience::Galileo)
+debugonce(jaspLearnScience:::Galileo)
 result <- runAnalysis(options = options, dataset = galileo)
